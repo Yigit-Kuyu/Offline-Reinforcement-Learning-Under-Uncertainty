@@ -11,8 +11,27 @@ import numpy as np
 import pickle
 import gzip
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+
+import matplotlib.pyplot as plt
+
+def test_policy(policy, env, num_episodes=10):
+    total_rewards = []
+    for _ in range(num_episodes):
+        state = env.reset()
+        done = False
+        episode_reward = 0
+        while not done:
+            action = policy.select_action(np.array(state))
+            next_state, reward, done, _ = env.step(action)
+            episode_reward += reward
+            state = next_state
+        total_rewards.append(episode_reward)
+    return np.mean(total_rewards), np.std(total_rewards)
+
+
 
 class ReplayBuffer(object):
 	def __init__(self, state_dim=10, action_dim=4):
@@ -134,25 +153,6 @@ def evaluate_policy(policy, env, eval_episodes=10):
     print("---------------------------------------")
     return avg_reward, std_rewards, median_reward
 
-class Actor(nn.Module):
-    """Actor used in BCQ"""
-    def __init__(self, state_dim, action_dim, max_action, threshold=0.05):
-        super(Actor, self).__init__()
-        self.l1 = nn.Linear(state_dim + action_dim, 400)
-        self.l2 = nn.Linear(400, 300)
-        self.l3 = nn.Linear(300, action_dim)
-        
-        self.max_action = max_action
-        self.threshold = threshold
-
-    def forward(self, state, action):
-        a = F.relu(self.l1(torch.cat([state, action], 1)))
-        a = F.relu(self.l2(a))
-        a = self.threshold * self.max_action * torch.tanh(self.l3(a))
-        return (a + action).clamp(-self.max_action, self.max_action)
-
-
-
 class RegularActor(nn.Module):
     """A probabilistic actor which does regular stochastic mapping of actions from states"""
     def __init__(self, state_dim, action_dim, max_action,):
@@ -202,33 +202,7 @@ class RegularActor(nn.Module):
         log_pis = log_pis - (1.0 - action**2).clamp(min=1e-6).log().sum(-1)
         return log_pis
 
-class Critic(nn.Module):
-    """Regular critic used in off-policy RL"""
-    def __init__(self, state_dim, action_dim):
-        super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim + action_dim, 400)
-        self.l2 = nn.Linear(400, 300)
-        self.l3 = nn.Linear(300, 1)
 
-        self.l4 = nn.Linear(state_dim + action_dim, 400)
-        self.l5 = nn.Linear(400, 300)
-        self.l6 = nn.Linear(300, 1)
-
-    def forward(self, state, action):
-        q1 = F.relu(self.l1(torch.cat([state, action], 1)))
-        q1 = F.relu(self.l2(q1))
-        q1 = self.l3(q1)
-
-        q2 = F.relu(self.l4(torch.cat([state, action], 1)))
-        q2 = F.relu(self.l5(q2))
-        q2 = self.l6(q2)
-        return q1, q2
-
-    def q1(self, state, action):
-        q1 = F.relu(self.l1(torch.cat([state, action], 1)))
-        q1 = F.relu(self.l2(q1))
-        q1 = self.l3(q1)
-        return q1
 
 class EnsembleCritic(nn.Module):
     """ Critic which does have a network of 4 Q-functions"""
@@ -312,7 +286,7 @@ class EnsembleCritic(nn.Module):
         return all_qs
 
 # Vanilla Variational Auto-Encoder 
-class VAE(nn.Module):
+class VAE(nn.Module): # To handle out of distribution samples
     """VAE Based behavior cloning also used in Fujimoto et.al. (ICML 2019)"""
     def __init__(self, state_dim, action_dim, latent_dim, max_action):
         super(VAE, self).__init__()
@@ -548,16 +522,19 @@ class BEAR(object):
             action_divergence = ((sampled_actions - actor_actions)**2).sum(-1)
             raw_action_divergence = ((raw_sampled_actions - raw_actor_actions)**2).sum(-1)
 
-            # Update through TD3 style
+            ## Update through TD3 style
+            # Compute the Q-values and uncertainty (std_q) for the actor's actions
             critic_qs, std_q = self.critic.q_all(state, actor_actions[:, 0, :], with_var=True)
             critic_qs = self.critic.q_all(state.unsqueeze(0).repeat(num_samples, 1, 1).view(num_samples*state.size(0), state.size(1)), actor_actions.permute(1, 0, 2).contiguous().view(num_samples*actor_actions.size(0), actor_actions.size(2)))
             critic_qs = critic_qs.view(self.num_qs, num_samples, actor_actions.size(0), 1)
             critic_qs = critic_qs.mean(1)
+            # Compute the standard deviation across critics (uncertainty)
             std_q = torch.std(critic_qs, dim=0, keepdim=False, unbiased=False)
 
-            if not self.use_ensemble:
+            if not self.use_ensemble: # Determine whether to include uncertainty penalty
                 std_q = torch.zeros_like(std_q).to(device)
                 
+            # Select the appropriate aggregation of Q-values
             if self.version == '0':
                 critic_qs = critic_qs.min(0)[0]
             elif self.version == '1':
@@ -566,7 +543,8 @@ class BEAR(object):
                 critic_qs = critic_qs.mean(0)
 
             # We do support matching with a warmstart which happens to be reasonable around epoch 20 during training
-            if self.epoch >= 20: 
+            # Compute the actor loss, including the uncertainty penalty
+            if self.epoch >= 20: # Only start adding the uncertainty penalty after 20 epochs
                 if self.mode == 'auto':
                     actor_loss = (-critic_qs +\
                         self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q +\
@@ -576,6 +554,8 @@ class BEAR(object):
                         self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q +\
                         100.0*mmd_loss).mean()      # This coefficient is hardcoded, and is different for different tasks. I would suggest using auto, as that is the one used in the paper and works better.
             else:
+                # If we are still in the initial epochs, only do support matching
+                # Warm-up period without uncertainty penalty
                 if self.mode == 'auto':
                     actor_loss = (self.log_lagrange2.exp() * mmd_loss).mean()
                 else:
@@ -620,14 +600,26 @@ class BEAR(object):
 
             for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-
-        
+      
+            
+            if it % 100 == 0:
+                print("Policy Performance:")
+                print(f"Training epoch: {self.epoch} Iteration: {it}")             
+                print(f"VAE Loss: {vae_loss.item():.4f}")
+                print(f"Critic Loss: {critic_loss.item():.4f}")
+                print(f"Actor Loss: {actor_loss.item():.4f}")
+                print(f"MMD Loss: {mmd_loss.mean().item():.4f}")
+                print(f"Std Q: {std_q.mean().item():.4f}")
+                if self.mode == 'auto':
+                    print(f"Lagrange Loss: {lagrange_loss.item():.4f}")
+                print("--------------------")
         
         self.epoch = self.epoch + 1
 
+      
+
 def weighted_mse_loss(inputs, target, weights):
     return torch.mean(weights * (inputs - target)**2)
-
 
 
 
@@ -667,21 +659,76 @@ if __name__ == "__main__":
     
     # Training loop
     evaluations = []
-    max_timesteps = 1e6
-    eval_freq = 5e3
+    max_timesteps = 1000 #1e6
+    eval_freq = 1000 #5e3
     training_iters = 0
+    import matplotlib.pyplot as plt
+
+    epochs = []
+    average_returns = []
+
     while training_iters < max_timesteps:         
         policy.train(rb, iterations=int(eval_freq))
-
-        ret_eval, var_ret, median_ret = evaluate_policy(policy, env)
+        ret_eval, std_ret,median_ret = evaluate_policy(policy, env)
         evaluations.append(ret_eval)
 
         training_iters += eval_freq
-        print(f"Training iterations: {training_iters}")
-        #logger.record_tabular('Training Epochs', int(training_iters // int(eval_freq)))
-        #logger.record_tabular('AverageReturn', ret_eval)
-        #logger.record_tabular('VarianceReturn', var_ret)
-        #logger.record_tabular('MedianReturn', median_ret)
-        #logger.dump_tabular()
-		
+        epochs.append(training_iters // eval_freq)
+        average_returns.append(ret_eval)
+
+        
+        print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}")
+
+    # Plot training curve
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, average_returns, marker='o')
+    plt.xlabel('Epochs')
+    plt.ylabel('Average Return')
+    plt.title('Training Curve: Average Return vs Epochs')
+    plt.grid(True)
+    plt.savefig('training_curve.png')
+    plt.close()
+
+    # Save the trained policy
+    torch.save(policy.actor.state_dict(), "bear_policy_actor.pth")
+    torch.save(policy.critic.state_dict(), "bear_policy_critic.pth")
+    torch.save(policy.vae.state_dict(), "bear_policy_vae.pth")
+    print("Policy saved successfully.")
+
+    # Load the saved policy for testing
+    loaded_policy = BEAR(2, state_dim, action_dim, max_action, delta_conf=0.1, use_bootstrap=False,
+        version='0',
+        lambda_=0.5,
+        threshold=0.05,
+        mode='auto',
+        num_samples_match=10,
+        mmd_sigma=20.0,
+        lagrange_thresh=10.0,
+        use_kl=False,
+        use_ensemble=False,
+        kernel_type='laplacian')
+    loaded_policy.actor.load_state_dict(torch.load("bear_policy_actor.pth"))
+    loaded_policy.critic.load_state_dict(torch.load("bear_policy_critic.pth"))
+    loaded_policy.vae.load_state_dict(torch.load("bear_policy_vae.pth"))
+    print("Policy loaded successfully.")
+
+    # Testing with loaded policy
+    print("Starting testing with loaded policy...")
+    test_rewards, test_std = test_policy(loaded_policy, env, num_episodes=10)  # Reduced number of episodes for quicker testing
+    
+    # Visualize a few episodes
+    for _ in range(3):  # Visualize 3 episodes
+        state = env.reset()
+        done = False
+        episode_reward = 0
+        while not done:
+            action = loaded_policy.select_action(np.array(state))
+            next_state, reward, done, _ = env.step(action)
+            episode_reward += reward
+            state = next_state
+            env.render()  # Render the environment
+        print(f"Visualized episode reward: {episode_reward}")
+    env.close()
+    print(f"Test Average Reward: {test_rewards:.2f} +/- {test_std:.2f}")
+
 print('stop')
