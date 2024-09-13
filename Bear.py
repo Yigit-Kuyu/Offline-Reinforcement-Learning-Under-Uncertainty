@@ -15,6 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 
+
 import matplotlib.pyplot as plt
 
 def test_policy(policy, env, num_episodes=10):
@@ -29,7 +30,7 @@ def test_policy(policy, env, num_episodes=10):
             episode_reward += reward
             state = next_state
         total_rewards.append(episode_reward)
-    return np.mean(total_rewards), np.std(total_rewards)
+    return np.mean(total_rewards), np.std(total_rewards), total_rewards
 
 
 
@@ -625,7 +626,8 @@ def weighted_mse_loss(inputs, target, weights):
 
 if __name__ == "__main__":
     # Create the environment
-    env = gym.make('halfcheetah-random-v2')
+    env_name = 'halfcheetah-random-v2'
+    env = gym.make(env_name)
 
     # Set seeds
     seed = np.random.randint(10, 1000)
@@ -669,15 +671,28 @@ if __name__ == "__main__":
 
     while training_iters < max_timesteps:         
         policy.train(rb, iterations=int(eval_freq))
-        ret_eval, std_ret,median_ret = evaluate_policy(policy, env)
+        ret_eval, std_ret, median_ret = evaluate_policy(policy, env)
         evaluations.append(ret_eval)
 
         training_iters += eval_freq
         epochs.append(training_iters // eval_freq)
         average_returns.append(ret_eval)
 
-        
         print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}")
+
+    # Calculate average, std and median of the training loop
+    avg_return = np.mean(average_returns)
+    std_return = np.std(average_returns)
+    median_return = np.median(average_returns)
+
+    # Write results to a text file
+    with open('training_results.txt', 'w') as f:
+        f.write(f"Training Results for {env_name}:\n")
+        f.write(f"Average Return: {avg_return:.2f}\n")
+        f.write(f"Standard Deviation: {std_return:.2f}\n")
+        f.write(f"Median Return: {median_return:.2f}\n")
+
+    print("Training results have been written to 'training_results.txt'")
 
     # Plot training curve
     plt.figure(figsize=(10, 6))
@@ -714,7 +729,23 @@ if __name__ == "__main__":
 
     # Testing with loaded policy
     print("Starting testing with loaded policy...")
-    test_rewards, test_std = test_policy(loaded_policy, env, num_episodes=10)  # Reduced number of episodes for quicker testing
+    test_rewards, test_std, total_rewards = test_policy(loaded_policy, env, num_episodes=10)  # Reduced number of episodes for quicker testing
+    
+    # Save test rewards
+    np.save('test_rewards.npy', total_rewards)
+    # Load test rewards for figure
+    loaded_total_rewards = np.load('test_rewards.npy')
+    
+    # Draw total_rewards
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, len(total_rewards) + 1), total_rewards, marker='o')
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
+    plt.title('Total Rewards per Episode in Test')
+    plt.grid(True)
+    plt.savefig('testing_curve.png')
+    plt.show()
+    plt.close()
     
     # Visualize a few episodes
     for _ in range(3):  # Visualize 3 episodes
@@ -732,3 +763,4 @@ if __name__ == "__main__":
     print(f"Test Average Reward: {test_rewards:.2f} +/- {test_std:.2f}")
 
 print('stop')
+
