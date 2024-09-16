@@ -362,7 +362,7 @@ class VAE(nn.Module): # To handle out of distribution samples
 class BEAR(object):
     def __init__(self, num_qs, state_dim, action_dim, max_action, delta_conf=0.1, use_bootstrap=True, version=0, lambda_=0.4,
                  threshold=0.05, mode='auto', num_samples_match=10, mmd_sigma=10.0,
-                 lagrange_thresh=10.0, use_kl=False, use_ensemble=True, kernel_type='laplacian'):
+                 lagrange_thresh=10.0, use_kl=False, use_ensemble=True, kernel_type='gaussian'):# laplacian 
         latent_dim = action_dim * 2
         self.actor = RegularActor(state_dim, action_dim, max_action).to(device)
         self.actor_target = RegularActor(state_dim, action_dim, max_action).to(device)
@@ -652,7 +652,7 @@ if __name__ == "__main__":
         lagrange_thresh=10.0,
         use_kl=False,
         use_ensemble=False,
-        kernel_type='laplacian')
+        kernel_type='gaussian') # laplacian 
 
     # Load dataset
     rb=ReplayBuffer()
@@ -661,21 +661,20 @@ if __name__ == "__main__":
     
     # Training loop
     evaluations = []
-    max_timesteps = 1000 #1e6
+    max_timesteps =200 #1e6
     eval_freq = 1000 #5e3
     training_iters = 0
     import matplotlib.pyplot as plt
 
-    epochs = []
     average_returns = []
-
-    while training_iters < max_timesteps:         
+    ii = 0
+    while ii < max_timesteps:  
+        ii += 1
         policy.train(rb, iterations=int(eval_freq))
         ret_eval, std_ret, median_ret = evaluate_policy(policy, env)
         evaluations.append(ret_eval)
 
         training_iters += eval_freq
-        epochs.append(training_iters // eval_freq)
         average_returns.append(ret_eval)
 
         print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}")
@@ -686,22 +685,22 @@ if __name__ == "__main__":
     median_return = np.median(average_returns)
 
     # Write results to a text file
-    with open('training_results.txt', 'w') as f:
+    with open('BEAR_training_results.txt', 'w') as f:
         f.write(f"Training Results for {env_name}:\n")
         f.write(f"Average Return: {avg_return:.2f}\n")
         f.write(f"Standard Deviation: {std_return:.2f}\n")
         f.write(f"Median Return: {median_return:.2f}\n")
 
-    print("Training results have been written to 'training_results.txt'")
+    print("BEAR Training results have been written to 'BEAR_training_results.txt'")
 
     # Plot training curve
     plt.figure(figsize=(10, 6))
-    plt.plot(epochs, average_returns, marker='o')
-    plt.xlabel('Epochs')
+    plt.plot(range(1, len(average_returns) + 1), average_returns, marker='o')
+    plt.xlabel('Training Iterations')
     plt.ylabel('Average Return')
-    plt.title('Training Curve: Average Return vs Epochs')
+    plt.title('Training Curve: Average Return vs Training Iterations')
     plt.grid(True)
-    plt.savefig('training_curve.png')
+    plt.savefig('BEAR_training_curve.png')
     plt.close()
 
     # Save the trained policy
@@ -721,7 +720,7 @@ if __name__ == "__main__":
         lagrange_thresh=10.0,
         use_kl=False,
         use_ensemble=False,
-        kernel_type='laplacian')
+        kernel_type='gaussian') # laplacian  
     loaded_policy.actor.load_state_dict(torch.load("bear_policy_actor.pth"))
     loaded_policy.critic.load_state_dict(torch.load("bear_policy_critic.pth"))
     loaded_policy.vae.load_state_dict(torch.load("bear_policy_vae.pth"))
@@ -731,19 +730,26 @@ if __name__ == "__main__":
     print("Starting testing with loaded policy...")
     test_rewards, test_std, total_rewards = test_policy(loaded_policy, env, num_episodes=10)  # Reduced number of episodes for quicker testing
     
+    # Write test results to a text file
+    with open('BEAR_test_results.txt', 'w') as f:
+        f.write(f"Test Results for {env_name}:\n")
+        f.write(f"Average Return: {test_rewards:.2f}\n")
+        f.write(f"Standard Deviation: {test_std:.2f}\n")
+        f.write(f"Total Rewards: {total_rewards}\n")
+    
     # Save test rewards
-    np.save('test_rewards.npy', total_rewards)
+    np.save('BEAR_test_rewards.npy', total_rewards)
     # Load test rewards for figure
-    loaded_total_rewards = np.load('test_rewards.npy')
+    loaded_total_rewards = np.load('BEAR_test_rewards.npy')
     
     # Draw total_rewards
     plt.figure(figsize=(10, 6))
-    plt.plot(range(1, len(total_rewards) + 1), total_rewards, marker='o')
+    plt.plot(range(1, len(loaded_total_rewards) + 1), loaded_total_rewards, marker='o')
     plt.xlabel('Episode')
     plt.ylabel('Total Reward')
     plt.title('Total Rewards per Episode in Test')
     plt.grid(True)
-    plt.savefig('testing_curve.png')
+    plt.savefig('BEAR_testing_curve.png')
     plt.show()
     plt.close()
     
