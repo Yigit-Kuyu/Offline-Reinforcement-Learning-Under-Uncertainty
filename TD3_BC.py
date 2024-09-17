@@ -264,7 +264,7 @@ def eval_policy(policy, env_name, seed, mean, std, seed_offset=100, eval_episode
 		episode_reward = 0.
 		state, done = eval_env.reset(), False
 		while not done:
-			state = (np.array(state).reshape(1,-1) - mean)/std
+			#state = (np.array(state).reshape(1,-1) - mean)/std # Normalize the state if normalize is True
 			action = policy.select_action(state)
 			state, reward, done, _ = eval_env.step(action)
 			episode_reward += reward
