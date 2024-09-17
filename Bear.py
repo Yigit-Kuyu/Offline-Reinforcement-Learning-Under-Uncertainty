@@ -10,13 +10,11 @@ import torch.distributions as td
 import numpy as np
 import pickle
 import gzip
+import math
+import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-
-
-import matplotlib.pyplot as plt
 
 def test_policy(policy, env, num_episodes=10):
     total_rewards = []
@@ -360,7 +358,7 @@ class VAE(nn.Module): # To handle out of distribution samples
         return self.max_action * torch.tanh(self.d3(a)), self.d3(a)
 
 class BEAR(object):
-    def __init__(self, num_qs, state_dim, action_dim, max_action, delta_conf=0.1, use_bootstrap=True, version=0, lambda_=0.4,
+    def __init__(self, num_qs, state_dim, action_dim, max_action, delta_conf=0.1, use_bootstrap=False, version=0, lambda_=0.4,
                  threshold=0.05, mode='auto', num_samples_match=10, mmd_sigma=10.0,
                  lagrange_thresh=10.0, use_kl=False, use_ensemble=True, kernel_type='gaussian'):# laplacian 
         latent_dim = action_dim * 2
@@ -494,10 +492,7 @@ class BEAR(object):
 
             current_Qs = self.critic(state, action, with_var=False)
             if self.use_bootstrap: 
-                critic_loss = (F.mse_loss(current_Qs[0], target_Q, reduction='none') * mask[:, 0:1]).mean() +\
-                            (F.mse_loss(current_Qs[1], target_Q, reduction='none') * mask[:, 1:2]).mean() 
-                            # (F.mse_loss(current_Qs[2], target_Q, reduction='none') * mask[:, 2:3]).mean() +\
-                            # (F.mse_loss(current_Qs[3], target_Q, reduction='none') * mask[:, 3:4]).mean()
+                critic_loss = (F.mse_loss(current_Qs[0], target_Q, reduction='none') * mask[:, 0:1]).mean() +(F.mse_loss(current_Qs[1], target_Q, reduction='none') * mask[:, 1:2]).mean() 
             else:
                 critic_loss = F.mse_loss(current_Qs[0], target_Q) + F.mse_loss(current_Qs[1], target_Q) #+ F.mse_loss(current_Qs[2], target_Q) + F.mse_loss(current_Qs[3], target_Q)
 
@@ -547,9 +542,8 @@ class BEAR(object):
             # Compute the actor loss, including the uncertainty penalty
             if self.epoch >= 20: # Only start adding the uncertainty penalty after 20 epochs
                 if self.mode == 'auto':
-                    actor_loss = (-critic_qs +\
-                        self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q +\
-                        self.log_lagrange2.exp() * mmd_loss).mean()
+                    #actor_loss = (-critic_qs +self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q +self.log_lagrange2.exp() * mmd_loss).mean()
+                    actor_loss = (-critic_qs + self._lambda * (math.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q + self.log_lagrange2.exp() * mmd_loss).mean()
                 else:
                     actor_loss = (-critic_qs +\
                         self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q +\
@@ -578,10 +572,8 @@ class BEAR(object):
                 thresh = -2.0
 
             if self.mode == 'auto':
-                lagrange_loss = (-critic_qs +\
-                        self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * (std_q) +\
-                        self.log_lagrange2.exp() * (mmd_loss - thresh)).mean()
-
+                #lagrange_loss = (-critic_qs +self._lambda * (np.sqrt((1 - self.delta_conf)/self.delta_conf)) * (std_q) +self.log_lagrange2.exp() * (mmd_loss - thresh)).mean()
+                lagrange_loss = (-critic_qs + self._lambda * (math.sqrt((1 - self.delta_conf)/self.delta_conf)) * std_q + self.log_lagrange2.exp() * (mmd_loss - self.threshold)).mean()
                 self.lagrange2_opt.zero_grad()
                 #(-lagrange_loss).backward() # orj
                 # Detach the tensor to avoid in-place operations and create a new computation graph
@@ -614,6 +606,11 @@ class BEAR(object):
                 if self.mode == 'auto':
                     print(f"Lagrange Loss: {lagrange_loss.item():.4f}")
                 print("--------------------")
+
+             # Add checks for nan values
+            if math.isnan(critic_loss.item()) or math.isnan(actor_loss.item()):
+                print(f"NaN detected at iteration {it}. Stopping training.")
+                #break
         
         self.epoch = self.epoch + 1
 
@@ -661,8 +658,8 @@ if __name__ == "__main__":
     
     # Training loop
     evaluations = []
-    max_timesteps =10 #1e6
-    eval_freq = 10 #5e3
+    max_timesteps =1000 #1e6
+    eval_freq = 1000 #5e3
     training_iters = 0
     import matplotlib.pyplot as plt
 

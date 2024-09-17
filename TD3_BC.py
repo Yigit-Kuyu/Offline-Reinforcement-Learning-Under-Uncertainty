@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Define test function
-def test_policy(policy, env_name, seed, mean, std, num_episodes=10):
+
+def test_policy(policy, env_name, seed, num_episodes=10):
 	eval_env = gym.make(env_name)
 	eval_env.seed(seed + 100)
 
@@ -253,35 +253,29 @@ class TD3_BC(object):
 		self.actor_target = copy.deepcopy(self.actor)
 
 
-# Runs policy for X episodes and returns D4RL score
-# A fixed seed is used for the eval environment
-def eval_policy(policy, env_name, seed, mean, std, seed_offset=100, eval_episodes=10):
-	eval_env = gym.make(env_name)
-	eval_env.seed(seed + seed_offset)
+def evaluate_policy(policy, env, eval_episodes=10):
+    avg_reward = 0.
+    all_rewards = []
+    for _ in range(eval_episodes):
+        obs = env.reset()
+        done = False
+        while not done:
+            action = policy.select_action(np.array(obs))
+            obs, reward, done, _ = env.step(action)
+            avg_reward += reward
+        all_rewards.append(avg_reward)
+    avg_reward /= eval_episodes
+    for j in range(eval_episodes-1, 1, -1):
+        all_rewards[j] = all_rewards[j] - all_rewards[j-1]
 
-	rewards = []
-	for _ in range(eval_episodes):
-		episode_reward = 0.
-		state, done = eval_env.reset(), False
-		while not done:
-			#state = (np.array(state).reshape(1,-1) - mean)/std # Normalize the state if normalize is True
-			action = policy.select_action(state)
-			state, reward, done, _ = eval_env.step(action)
-			episode_reward += reward
-		rewards.append(episode_reward)
+    all_rewards = np.array(all_rewards)
+    std_rewards = np.std(all_rewards)
+    median_reward = np.median(all_rewards)
+    print("---------------------------------------")
+    print(f"Evaluation over {eval_episodes} episodes: {avg_reward}")
+    print("---------------------------------------")
+    return avg_reward, std_rewards, median_reward
 
-	rewards = np.array(rewards)
-	ret_eval = np.mean(rewards)
-	std_ret = np.std(rewards)
-	median_ret = np.median(rewards)
-
-	d4rl_score = eval_env.get_normalized_score(ret_eval) * 100
-
-	print("---------------------------------------")
-	print(f"Evaluation over {eval_episodes} episodes: {ret_eval:.3f}, D4RL score: {d4rl_score:.3f}")
-	print(f"Std: {std_ret:.3f}, Median: {median_ret:.3f}")
-	print("---------------------------------------")
-	return ret_eval, std_ret, median_ret
 
 
 if __name__ == "__main__":
@@ -290,8 +284,8 @@ if __name__ == "__main__":
 	policy = "TD3_BC"
 	env_name = "halfcheetah-random-v2"
 	seed = 0
-	eval_freq = 10 # 1000
-	max_timesteps = 10 # 1000
+	eval_freq = 1000 # 1000
+	max_timesteps = 1000 # 1000
 	expl_noise = 0.1
 	batch_size = 256
 	discount = 0.99
@@ -350,7 +344,7 @@ if __name__ == "__main__":
 		policy.train(replay_buffer, batch_size) #   processes one batch of data per call
 		
 		print(f"Time steps: {t+1}")
-		ret_eval, std_ret, median_ret = eval_policy(policy, env_name, seed, mean, std)
+		ret_eval, std_ret, median_ret = evaluate_policy(policy, env)
 		average_returns.append(ret_eval)
 		print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}")
 
@@ -388,7 +382,7 @@ if __name__ == "__main__":
 
 
 	# Use loaded policy for testing
-	test_rewards, test_std, total_rewards = test_policy(loaded_policy, env_name, seed, mean, std)
+	test_rewards, test_std, total_rewards = test_policy(loaded_policy, env_name, seed)
 
 	# Write test results to a text file
 	with open('TD3_BC_test_results.txt', 'w') as f:
