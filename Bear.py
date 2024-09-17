@@ -152,6 +152,28 @@ def evaluate_policy(policy, env, eval_episodes=10):
     print("---------------------------------------")
     return avg_reward, std_rewards, median_reward
 
+def normalized_evaluate_policy(policy, env, eval_episodes=10):
+    avg_reward = 0.
+    all_rewards = []
+    for _ in range(eval_episodes):
+        obs = env.reset()
+        done = False
+        while not done:
+            action = policy.select_action(np.array(obs))
+            obs, reward, done, _ = env.step(action)
+            avg_reward += reward
+        all_rewards.append(avg_reward)
+    avg_reward /= eval_episodes
+    d4rl_score = env.get_normalized_score(avg_reward) * 100
+
+    all_rewards = np.array(all_rewards)
+    std_rewards = np.std(all_rewards)
+    median_reward = np.median(all_rewards)
+    print("---------------------------------------")
+    print(f"Evaluation over {eval_episodes} episodes: {avg_reward}, D4RL Score: {d4rl_score}")
+    print("---------------------------------------")
+    return avg_reward, std_rewards, median_reward, d4rl_score
+
 class RegularActor(nn.Module):
     """A probabilistic actor which does regular stochastic mapping of actions from states"""
     def __init__(self, state_dim, action_dim, max_action,):
@@ -669,13 +691,13 @@ if __name__ == "__main__":
     while grad_steps     < max_grad_steps:  
         policy.train(rb, iterations=int(eval_freq))
         grad_steps += int(eval_freq)
-        ret_eval, std_ret, median_ret = evaluate_policy(policy, env)
+        ret_eval, std_ret, median_ret, d4rl_score = normalized_evaluate_policy(policy, env)
         evaluations.append(ret_eval)
 
         training_iters += eval_freq
         average_returns.append(ret_eval)
 
-        print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}")
+        print(f"Average Return: {ret_eval}, std: {std_ret}, median: {median_ret}, D4RL Score: {d4rl_score}")
 
     # Calculate average, std and median of the training loop
     avg_return = np.mean(average_returns)
@@ -688,6 +710,7 @@ if __name__ == "__main__":
         f.write(f"Average Return: {avg_return:.2f}\n")
         f.write(f"Standard Deviation: {std_return:.2f}\n")
         f.write(f"Median Return: {median_return:.2f}\n")
+        f.write(f"D4RL Score: {d4rl_score:.2f}\n")
 
     print("BEAR Training results have been written to 'BEAR_training_results.txt'")
 
