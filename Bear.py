@@ -679,20 +679,19 @@ if __name__ == "__main__":
     load_hdf5_mujoco(dataset, rb)
     
     # Training loop
-    evaluations = []
     max_timesteps =1000 #1e6
     eval_freq = 1000 #5e3
     training_iters = 0
-    import matplotlib.pyplot as plt
+    
 
     average_returns = []
     grad_steps = 0
     max_grad_steps = int(max_timesteps*eval_freq)
-    while grad_steps     < max_grad_steps:  
+    while grad_steps  < max_grad_steps:  
         policy.train(rb, iterations=int(eval_freq))
         grad_steps += int(eval_freq)
         ret_eval, std_ret, median_ret, d4rl_score = normalized_evaluate_policy(policy, env)
-        evaluations.append(ret_eval)
+        
 
         training_iters += eval_freq
         average_returns.append(ret_eval)

@@ -180,7 +180,7 @@ class TD3_BC(object):
 		return self.actor(state).cpu().data.numpy().flatten()
 
 
-	def train(self, replay_buffer, batch_size=256):
+	def train(self, replay_buffer, batch_size=100):
 		self.total_it += 1
 
 		# Sample replay buffer 
@@ -309,7 +309,7 @@ if __name__ == "__main__":
 	eval_freq = 1000 # 1000
 	max_timesteps = 1000 # 1000
 	expl_noise = 0.1
-	batch_size = 256
+	batch_size = 100
 	discount = 0.99
 	tau = 0.005
 	policy_noise = 0.2
